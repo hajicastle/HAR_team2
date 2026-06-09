@@ -139,13 +139,13 @@ Generated from a recorded trial by `final_project_analysis.py --plot` (6-row fig
 3. Record: `python PythonDecoder/CDC/cdc_selective_logger.py`, select module `0xF0`, choose the **`Final_Stair_Assist`** preset (added for this project — 16 channels: EMG R/L env, EMG R/L act, FSR RH/RT/LH/LT, Phase R/L, Gait R/L, Thigh R/L, Tau R/L). Save `B0_subjectXX.csv` and `E1_subjectXX.csv`.
 4. Analyse/plot: `final_project_analysis.py` reads this exact 16-channel schema (`pc_time_s, EMG R env, …, Tau R, Tau L`), detects stair cycles from the phase-clock resets, and emits the M1–M4 table + the Problem 2(b) 6-row figure. It has been run end-to-end on synthetic data (table + both plots generated); only the real recorded CSVs are still needed.
 
-## Appendix D — Build status
+## Appendix C — Build status
 
 The firmware **builds clean** with the STM32CubeIDE 2.1.1 bundled toolchain (arm-none-eabi-gcc 14.3, CMake 3.30, Ninja): `cmake --preset Debug && cmake --build --preset Debug` → `Extension_Module.elf` / `.bin` (FLASH 30 %, RAM_D2 99 %). `user_app.c` compiles with no errors/warnings. One stock-repo fix was required to link: the top-level `Core/Src/system_stm32h7xx.c` was missing the CubeMX-6.13+ `ExitRun0Mode()` power-supply shim that `startup_stm32h743xx.s` calls (the function exists in the `XM10_SDK/Rev1.1` copy and is documented in the CHANGELOG) — it was added back. The build needs `pyyaml` in the Python used by the pre-build codegen step.
 
 Two refinements were folded in from `examples/17_FSM_Gait_Intent` (TA-recommended) and re-verified to build clean: (1) the pull-up trigger is now an **ordered single-direction gait FSM** with a 60 ms per-phase dwell (fires once per cycle, no argmax chatter); (2) `XM_SendUserBodyData()` is called at startup so the H10 thigh/pelvic-angle estimates (safety bounds + M4 metric) are accurate. A `use_assist_level_scale` flag (default 0) optionally scales torque by the suit's assist-level button for live demos without affecting the deterministic experiment torque. On-device USB-MSC logging was deliberately not added — the Python CDC logger is the data path and no spare button is free.
 
-## Appendix C — Control-law parameter summary
+## Appendix D — Control-law parameter summary
 
 | Parameter | Symbol / macro | Value |
 |-----------|----------------|-------|
