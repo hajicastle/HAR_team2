@@ -34,7 +34,10 @@ PHAI_HEADER_SIZE = 6
 PHAI_CRC_SIZE = 2
 DEFAULT_BAUD = 921600
 DEFAULT_MODULE_ID = 0xF0
-DEFAULT_LABELS = ["PF3", "PF4", "PF5", "PF6"]
+# C 스트림 struct 순서: [0]EMG_R [1]EMG_L [2]FSR_RH [3]FSR_RT [4]FSR_LH [5]FSR_LT ...
+# FSR 4채널은 payload의 인덱스 2~5 에 위치
+FSR_CHANNEL_OFFSET = 2
+DEFAULT_LABELS = ["FSR_RH", "FSR_RT", "FSR_LH", "FSR_LT"]
 DEFAULT_SAMPLE_RATE_HZ = 500.0
 DEFAULT_LPF_CUTOFF_HZ = 8.0
 DEFAULT_ON_THRESHOLD = 0.35
@@ -52,6 +55,9 @@ CONTACT_PRESETS = {
     "Strict": (0.55, 0.35),
 }
 
+# 신버전 C 비트마스크 (Active_Loop line 314):
+#   mask = (lh<<3)|(lt<<2)|(rh<<1)|(rt<<0)
+#   → bit3=LH, bit2=LT, bit1=RH, bit0=RT
 BITS = ("LH", "LT", "RH", "RT")
 EVENTS = (
     "L_HEEL_STRIKE",
@@ -72,23 +78,24 @@ HIGH_LEVEL_STATES = (
     "STANDING",
 )
 
+# 비트 배치: bit3=LH, bit2=LT, bit1=RH, bit0=RT  (신버전 C mask 기준)
 STATE_TABLE = {
-    0b0000: ("NO_CONTACT", "no contact"),
-    0b0001: ("R_TOE_ONLY", "right toe partial contact"),
-    0b0010: ("R_HEEL_ONLY", "right heel loading"),
-    0b0011: ("R_FOOT_FLAT", "right single support"),
-    0b0100: ("L_TOE_ONLY", "left toe partial contact"),
-    0b0101: ("TOE_TOE", "toe-toe transition"),
-    0b0110: ("R_LOAD_L_PUSH", "right loading + left push-off"),
-    0b0111: ("R_STANCE_L_PUSH", "double support, left push-off"),
-    0b1000: ("L_HEEL_ONLY", "left heel loading"),
-    0b1001: ("L_LOAD_R_PUSH", "left loading + right push-off"),
-    0b1010: ("HEEL_HEEL", "heel-heel transition"),
-    0b1011: ("L_LOAD_R_STANCE", "double support, left loading"),
-    0b1100: ("L_FOOT_FLAT", "left single support"),
-    0b1101: ("L_STANCE_R_PUSH", "double support, right push-off"),
-    0b1110: ("R_LOAD_L_STANCE", "double support, right loading"),
-    0b1111: ("DOUBLE_FULL", "full double contact"),
+    0b0000: ("NO_CONTACT",       "no contact"),
+    0b0001: ("RT_ONLY",          "right toe partial contact"),
+    0b0010: ("RH_ONLY",          "right heel loading"),
+    0b0011: ("R_FOOT_FLAT",      "right single support"),
+    0b0100: ("LT_ONLY",          "left toe partial contact"),
+    0b0101: ("TOE_TOE",          "toe-toe transition"),
+    0b0110: ("R_LOAD_L_PUSH",    "right loading + left push-off"),
+    0b0111: ("R_STANCE_L_PUSH",  "double support, left push-off"),
+    0b1000: ("LH_ONLY",          "left heel loading"),
+    0b1001: ("L_LOAD_R_PUSH",    "left loading + right push-off"),
+    0b1010: ("HEEL_HEEL",        "heel-heel transition"),
+    0b1011: ("L_LOAD_R_STANCE",  "double support, left loading"),
+    0b1100: ("L_FOOT_FLAT",      "left single support"),
+    0b1101: ("L_STANCE_R_PUSH",  "double support, right push-off"),
+    0b1110: ("R_LOAD_L_STANCE",  "double support, right loading"),
+    0b1111: ("DOUBLE_FULL",      "full double contact"),
 }
 
 
@@ -185,8 +192,9 @@ def bits_text(mask: int) -> str:
 def high_level_state(mask: int, standing: bool) -> str:
     if standing:
         return "STANDING"
-    left = bool(mask & 0b1100)
-    right = bool(mask & 0b0011)
+    # 신버전 C: bit3=LH, bit2=LT, bit1=RH, bit0=RT
+    left  = bool(mask & 0b1100)  # LH | LT
+    right = bool(mask & 0b0011)  # RH | RT
     if left and right:
         return "DOUBLE_SUPPORT"
     if left:
@@ -300,17 +308,18 @@ class BilateralGaitDetector:
         events = []
 
         if self.prev_mask is not None and mask != self.prev_mask:
-            prev_left = bool(self.prev_mask & 0b1100)
-            prev_right = bool(self.prev_mask & 0b0011)
-            left = bool(mask & 0b1100)
+            # 신버전 C: bit3=LH, bit2=LT, bit1=RH, bit0=RT
+            prev_left  = bool(self.prev_mask & 0b1100)  # LH | LT
+            prev_right = bool(self.prev_mask & 0b0011)  # RH | RT
+            left  = bool(mask & 0b1100)
             right = bool(mask & 0b0011)
 
-            left_contact_on = not prev_left and left
+            left_contact_on  = not prev_left  and left
             right_contact_on = not prev_right and right
-            left_heel_on = not (self.prev_mask & 0b1000) and bool(mask & 0b1000)
-            right_heel_on = not (self.prev_mask & 0b0010) and bool(mask & 0b0010)
-            left_toe_off = bool(self.prev_mask & 0b0100) and not (mask & 0b0100)
-            right_toe_off = bool(self.prev_mask & 0b0001) and not (mask & 0b0001)
+            left_heel_on  = not (self.prev_mask & 0b1000) and bool(mask & 0b1000)  # LH=bit3
+            right_heel_on = not (self.prev_mask & 0b0010) and bool(mask & 0b0010)  # RH=bit1
+            left_toe_off  = bool(self.prev_mask & 0b0100) and not (mask & 0b0100)  # LT=bit2
+            right_toe_off = bool(self.prev_mask & 0b0001) and not (mask & 0b0001)  # RT=bit0
 
             if (left_heel_on or left_contact_on) and prev_right:
                 events.append("L_HEEL_STRIKE")
@@ -450,7 +459,8 @@ def run_gui(
 
                         seq_id, mid, _status, values = packet
                         decoded_count += 1
-                        if mid != module_id or len(values) < 4:
+                        # C 스트림: [0]EMG_R [1]EMG_L [2]FSR_RH [3]FSR_RT [4]FSR_LH [5]FSR_LT ...
+                        if mid != module_id or len(values) < FSR_CHANNEL_OFFSET + 4:
                             continue
 
                         matched_count += 1
@@ -458,7 +468,8 @@ def run_gui(
                             continue
                         t = now_abs - t0
                         rate_hz = matched_count / max(t, 1e-6)
-                        self.sample.emit(t, seq_id, tuple(values[:4]), rate_hz, error_count)
+                        fsr_values = tuple(values[FSR_CHANNEL_OFFSET:FSR_CHANNEL_OFFSET + 4])
+                        self.sample.emit(t, seq_id, fsr_values, rate_hz, error_count)
             finally:
                 ser.close()
                 self.status.emit("disconnected")
@@ -658,6 +669,7 @@ def run_gui(
             self.plot.addLegend(offset=(10, 10))
             root.addWidget(self.plot, 2)
 
+            # 색상: RH=진빨, RT=연빨/오렌지, LH=진파, LT=연파/초록
             colors = ["#d62728", "#ff7f0e", "#1f77b4", "#2ca02c"]
             self.curves = []
             for label, color in zip(labels, colors):
